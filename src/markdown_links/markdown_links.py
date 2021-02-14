@@ -42,6 +42,11 @@ class _InlineProcessor(InlineProcessor):
             return None, None, None
 
         document_path: Path = Path() / href
+
+        # filter out non-existent files
+        if not document_path.exists():
+            return None, None, None
+
         custom_title: Optional[str] = m.group(1)
         composite_title: str = m.group(2)
         custom_primer: Optional[str] = m.group(5)
@@ -162,6 +167,7 @@ class _TreeProcessor(Treeprocessor):
                     for transfer_child in child:
                         element.insert(i, transfer_child)
                         i += 1
+                    element[i - 1].tail = child.tail
                 else:
                     i += 1
 
