@@ -15,7 +15,7 @@ from markdown.treeprocessors import Treeprocessor
 
 class MarkdownLinks(Extension):
 
-    _link_pattern = NOIMG + r'\[(.*?)\](\+?)\((.+?)\)(\+?(?:(.+?)\+)?)(?:{(.+?)})?([<>](\d+)?)?'
+    _link_pattern = NOIMG + r'\[(.*?)\](\+?)\((.+?)\)(\+?(?:(.+?)\+)?)(?:"(.+?)")?([<>](\d+)?)?'
 
     def extendMarkdown(self, md: Markdown):
         md.inlinePatterns.register(_InlineProcessor(self._link_pattern, md), 'markdown_links_inline_processor', 165)
