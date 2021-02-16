@@ -13,12 +13,15 @@ from markdown.inlinepatterns import InlineProcessor, NOIMG
 from markdown.treeprocessors import Treeprocessor
 
 
+_relative_url_pattern: Pattern = re.compile(r'(?!//)([^/][^?#]*)(?:\?([^#]*))?(?:#(.*))?')
+
+
 class MarkdownLinks(Extension):
 
-    _link_pattern = NOIMG + r'\[(.*?)\](\+?)\((.+?)\)(\+?(?:(.+?)\+)?)(?:"(.+?)")?([<>](\d+)?)?'
+    _inline_pattern = NOIMG + r'\[(.*?)\](\+?)\((.+?)\)(\+?(?:(.+?)\+)?)(?:"(.+?)")?([<>](\d+)?)?'
 
     def extendMarkdown(self, md: Markdown):
-        md.inlinePatterns.register(_InlineProcessor(self._link_pattern, md), 'markdown_links_inline_processor', 165)
+        md.inlinePatterns.register(_InlineProcessor(self._inline_pattern, md), 'markdown_links_inline_processor', 165)
         md.treeprocessors.register(_TreeProcessor(), 'markdown_links_tree_processor', 15)
 
 
@@ -32,16 +35,17 @@ class _InlineProcessor(InlineProcessor):
     def handleMatch(self, m, data):
 
         href: str = m.group(3)
+        is_relative, path, params, anchor = _parse_relative_url(href)
+
+        # filter out non-relative hrefs
+        if not is_relative:
+            return None, None, None
 
         # filter out non-markdown-file hrefs
-        if not href.endswith('.md') and not href.endswith('.mkd'):  # TODO add more common extensions
+        if not path.endswith('.md') and not path.endswith('.mkd'):  # TODO add more common extensions
             return None, None, None
 
-        # filter non-relative hrefs
-        if not _is_relative_path(href):
-            return None, None, None
-
-        document_path: Path = Path() / href
+        document_path: Path = Path() / path
 
         # filter out non-existent files
         if not document_path.exists():
@@ -89,13 +93,11 @@ class _InlineProcessor(InlineProcessor):
         result = Element('markdown_links_container')
 
         anchor = Element('a')
-        anchor.set('href', href)
+        anchor.attrib['class'] = 'markdown_links'
+        anchor.attrib['href'] = href
         result.append(anchor)
         if custom_title and document_title and composite_title:
-            span = Element('span')
-            span.text = custom_title
-            span.tail = ' '
-            anchor.append(span)
+            anchor.text = custom_title + ' '
             span = Element('span')
             span.text = f'({document_title})'
             anchor.append(span)
@@ -114,7 +116,7 @@ class _InlineProcessor(InlineProcessor):
             if document_excerpt_control:
 
                 checkbox = Element('input')
-                checkbox.attrib['class'] = 'markdown_links_excerpt_control'
+                checkbox.attrib['class'] = 'markdown_links'
                 checkbox.attrib['type'] = 'checkbox'
                 checkbox.attrib[self._excerpt_depth_attribute] = '0'
                 checkbox.attrib[self._excerpt_importance_attribute] = document_excerpt_importance
@@ -128,7 +130,7 @@ class _InlineProcessor(InlineProcessor):
                     checkbox.attrib['id'] = uuid
                     checkbox.attrib['class'] += ' hidden'
                     label = Element('label')
-                    label.attrib['class'] = 'markdown_links_excerpt_control_label'
+                    label.attrib['class'] = 'markdown_links'
                     label.attrib['for'] = uuid
                     result.insert(0, label)
 
@@ -138,8 +140,8 @@ class _InlineProcessor(InlineProcessor):
             element_tree = ElementTree.fromstring(self.md.convert(''.join(document_excerpt_lines)))
             element_tree.attrib['class'] = 'markdown_links_excerpt'
             for element in _recurse(element_tree):
-                _fix_attribute_relative_path(element, 'href', return_dir)
-                _fix_attribute_relative_path(element, 'src', return_dir)
+                _fix_attribute_relative_url(element, 'href', return_dir)
+                _fix_attribute_relative_url(element, 'src', return_dir)
                 excerpt_depth = int(element.attrib.get(self._excerpt_depth_attribute, -1))
                 if excerpt_depth > -1:
                     excerpt_depth += 1
@@ -178,17 +180,23 @@ def _recurse(element_tree: ElementTree):
         yield from _recurse(child)
 
 
-def _fix_attribute_relative_path(element: Element, attribute: str, anchor_path):
+def _parse_relative_url(link: str):
+    match = _relative_url_pattern.match(link)
+    if not match:
+        return False, None, None, None
+    return True, match.group(1), match.group(2), match.group(3)
+
+
+def _fix_attribute_relative_url(element: Element, attribute: str, anchor_path):
     value = element.attrib.get(attribute, None)
-    if _is_relative_path(value):
-        element.attrib[attribute] = os.path.relpath(value, anchor_path)
-
-
-def _is_relative_path(path: Optional[str]) -> bool:
-    # filter out urls and references to root
-    if not path or '//' in path or os.path.isabs(path):
-        return False
-    return True
+    if value:
+        is_relative, path, params, anchor = _parse_relative_url(value)
+        if is_relative:
+            element.attrib[attribute] = os.path.relpath(path, anchor_path)
+            if params:
+                element.attrib[attribute] += '?' + params
+            if anchor:
+                element.attrib[attribute] += '#' + anchor
 
 
 def makeExtension(**kwargs):
