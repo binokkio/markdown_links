@@ -1,44 +1,23 @@
-/* this section sets up the excerpt pulse animation */
+/* this section sets up the color for the document title when a custom title or anchor is given */
+a.markdown_links > span {
+    color: green;
+}
+
+
+/* this section sets up the excerpt control, only relevant for markdown links ending on '<' */
+
+input.markdown_links {  /* the excerpt control is hidden but still controls the excerpt visibility */
+    display: none;
+}
 
 input.markdown_links:not(:checked) + .markdown_links_excerpt {  /* hide the excerpt when the control is not checked */
     position: absolute; width: 0; height: 0; overflow: hidden;  /* can't use display none for hiding, would break background transition */
     background: yellow;  /* this is the color of the excerpt pulse */
 }
 
-.markdown_links_excerpt {
+input.markdown_links:checked + .markdown_links_excerpt {
     transition: background-color 1s ease-out;  /* this is the transition of the excerpt pulse */
     background: transparent;
-}
-
-
-/* this section sets up the excerpt control, only relevant for markdown links ending on '>' */
-
-input.markdown_links {
-    appearance: none; margin: 0; font-size: 1em; line-height: 1em;  /* reset browser-assigned styles for the control */
-    font-family: sans-serif;  /* this should be set to match the rest of the document */
-    cursor: pointer;
-}
-
-input.markdown_links::before {  /* a single space should precede the excerpt control */
-    content: " ";
-    white-space: pre;
-}
-
-input.markdown_links:not(:checked)::after {  /* what to show when the excerpt is hidden */
-    content: "Show excerpt.";
-    text-decoration: underline;
-}
-
-input.markdown_links:checked::after {  /* what to show when the excerpt is shown */
-    content: "Hide excerpt.";
-    text-decoration: underline;
-}
-
-
-/* this section sets up the excerpt control label, only relevant for markdown links ending on '<' */
-
-input.markdown_links.hidden {  /* the excerpt control is hidden for these links but still controls the excerpt visibility */
-    display: none;
 }
 
 

@@ -10,16 +10,17 @@ from uuid import uuid4
 
 from markdown import Markdown
 from markdown.extensions import Extension
+from markdown.extensions.toc import slugify_unicode
 from markdown.inlinepatterns import InlineProcessor, NOIMG
 from markdown.treeprocessors import Treeprocessor
 
-
 _relative_url_pattern: Pattern = re.compile(r'(?!//)([^/][^?#]*)(?:\?([^#]*))?(?:#(.*))?')
+_excerpt_depth_attribute = 'data-markdown-links-excerpt-depth'
+_excerpt_importance_attribute = 'data-markdown-links-excerpt-importance'
 
 
 class MarkdownLinks(Extension):
-
-    _inline_pattern = NOIMG + r'\[(.*?)\](\+?)\((.+?)\)(\+?(?:(.+?)\+)?)(?:"(.+?)")?([<>](\d+)?)?'
+    _inline_pattern = NOIMG + r'\[(.*?)\](\+?)\((.+?)\)(\+?(?:(.+?)\+)?)(?:"(.*?)")?([<>](\d+)?)?'
 
     def extendMarkdown(self, md: Markdown):
         md.inlinePatterns.register(_InlineProcessor(self._inline_pattern, md), 'markdown_links_inline_processor', 165)
@@ -27,11 +28,8 @@ class MarkdownLinks(Extension):
 
 
 class _InlineProcessor(InlineProcessor):
-
     _markdown_title_pattern: Pattern = re.compile(r'^(#+)\s*(\S.*)$')
     _markdown_primer_pattern: Pattern = re.compile(r'^(\w.*?(?:[.!?]|$))')
-    _excerpt_depth_attribute = 'data-markdown-links-excerpt-depth'
-    _excerpt_importance_attribute = 'data-markdown-links-excerpt-importance'
 
     def handleMatch(self, m, data):
 
@@ -52,44 +50,53 @@ class _InlineProcessor(InlineProcessor):
         if not document_path.exists():
             return None, None, None
 
-        custom_title: Optional[str] = m.group(1)
-        composite_title: str = m.group(2)
         custom_primer: Optional[str] = m.group(5)
         include_primer: bool = len(m.group(4)) > 0
-        include_excerpt: Optional[str] = m.group(6)
+        include_excerpt: Optional[str] = anchor if m.group(6) == '' else m.group(6)
+        composite_title: bool = bool(m.group(2))
+        custom_title: Optional[str] = m.group(1)
         document_title: Optional[str] = None
-        document_primer: Optional[str] = None
-        document_excerpt_lines: List[str] = []
-        document_excerpt_control: Optional[str] = m.group(7)
-        document_excerpt_importance: int = m.group(8) if m.group(8) else '0'
+        anchor_title: Optional[str] = None
+        primer: Optional[str] = None
+        excerpt_lines: List[str] = []
+        excerpt_control: Optional[str] = m.group(7)
+        excerpt_importance: str = m.group(8) if m.group(8) else '0'
 
         with document_path.open() as file:
 
             for line in file:
                 title_match = self._markdown_title_pattern.match(line)
                 if title_match:
+                    title = title_match.group(2)
                     title_level = len(title_match.group(1))
                     if title_level == 1:
-                        document_title = title_match.group(2)
+                        document_title = title
+                    if anchor and anchor.startswith(slugify_unicode(title, '-')):  # TODO get sep from toc conf
+                        anchor_title = title
+                    if document_title and (anchor_title or not anchor):
                         break
 
             if include_primer and not custom_primer:
                 for line in file:
                     primer_match = self._markdown_primer_pattern.match(line)
                     if primer_match:
-                        document_primer = primer_match.group(1)
+                        primer = primer_match.group(1)
                         break
 
         if include_excerpt:
             with document_path.open() as file:
                 for line in file:
                     title_match = self._markdown_title_pattern.match(line)
-                    if title_match and title_match.group(2) == include_excerpt:
-                        for excerpt_line in file:
-                            title_match = self._markdown_title_pattern.match(excerpt_line)
-                            if title_match:
-                                break
-                            document_excerpt_lines.append(excerpt_line)
+                    if title_match:
+                        title = title_match.group(2)
+                        # TODO get sep from toc conf
+                        if include_excerpt == title or include_excerpt.startswith(slugify_unicode(title, '-')):
+                            include_excerpt = title  # make sure include_excerpt holds the pretty/non-slug title
+                            for excerpt_line in file:
+                                title_match = self._markdown_title_pattern.match(excerpt_line)
+                                if title_match:
+                                    break
+                                excerpt_lines.append(excerpt_line)
 
         result = Element('markdown_links_container')
 
@@ -97,62 +104,77 @@ class _InlineProcessor(InlineProcessor):
         anchor.attrib['class'] = 'markdown_links'
         anchor.attrib['href'] = href
         result.append(anchor)
-        if custom_title and document_title and composite_title:
-            anchor.text = custom_title + ' '
+        if composite_title and (custom_title or anchor_title) and document_title:
+            anchor.text = (custom_title or anchor_title) + ' '
             span = Element('span')
             span.text = f'({document_title})'
             anchor.append(span)
         else:
-            anchor.text = custom_title or document_title or document_path.name
+            anchor.text = custom_title or anchor_title or document_title or document_path.name
 
         if include_primer:
-            primer = custom_primer or document_primer
+            primer = custom_primer or primer
             if primer:
                 span = Element('span')
                 span.text = ': ' + primer
                 result.append(span)
+                # TODO maybe turn this into a label for list item excerpts
 
-        if document_excerpt_lines:
+        if excerpt_lines:
 
-            if document_excerpt_control:
+            excerpt_parent = result
 
-                checkbox = Element('input')
-                checkbox.attrib['class'] = 'markdown_links'
-                checkbox.attrib['type'] = 'checkbox'
-                checkbox.attrib[self._excerpt_depth_attribute] = '0'
-                checkbox.attrib[self._excerpt_importance_attribute] = document_excerpt_importance
-                result.append(checkbox)
-
-                if document_excerpt_importance != '0':
-                    checkbox.attrib['checked'] = 'checked'
-
-                if document_excerpt_control.startswith('<'):
+            if excerpt_control:
+                if excerpt_control.startswith('<'):
                     uuid = str(uuid4())
+                    checkbox = Element('input')
                     checkbox.attrib['id'] = uuid
-                    checkbox.attrib['class'] += ' hidden'
+                    checkbox.attrib['class'] = 'markdown_links hidden'
+                    checkbox.attrib['type'] = 'checkbox'
+                    _initialize_depth_and_importance(checkbox, excerpt_importance, 'checked')
+                    result.append(checkbox)
                     label = Element('label')
                     label.attrib['class'] = 'markdown_links'
                     label.attrib['for'] = uuid
                     result.insert(0, label)
+                else:
+                    details = Element('details')
+                    details.attrib['class'] = 'markdown_links'
+                    _initialize_depth_and_importance(details, excerpt_importance, 'open')
+                    result.append(details)
+                    summary = Element('summary')
+                    summary.text = include_excerpt + ' from '
+                    anchor = Element('a')
+                    anchor.attrib['href'] = href
+                    anchor.text = document_title or document_path.name
+                    summary.append(anchor)
+                    details.append(summary)
+                    excerpt_parent = details
 
             return_dir = os.getcwd()
             os.chdir(document_path.parent)
 
-            element_tree = ElementTree.fromstring(deepcopy(self.md).convert(''.join(document_excerpt_lines)))
-            element_tree.attrib['class'] = 'markdown_links_excerpt'
-            for element in _recurse(element_tree):
+            md = deepcopy(self.md)
+            md.stripTopLevelTags = False
+            excerpt = ElementTree.fromstring(md.convert(''.join(excerpt_lines)))
+            if len(excerpt) == 1:
+                excerpt = excerpt[0]
+            excerpt.attrib['class'] = 'markdown_links_excerpt'
+
+            for element in _recurse(excerpt):
                 _fix_attribute_relative_url(element, 'href', return_dir)
                 _fix_attribute_relative_url(element, 'src', return_dir)
-                excerpt_depth = int(element.attrib.get(self._excerpt_depth_attribute, -1))
+                excerpt_depth = int(element.attrib.get(_excerpt_depth_attribute, -1))
                 if excerpt_depth > -1:
                     excerpt_depth += 1
-                    element.attrib[self._excerpt_depth_attribute] = str(excerpt_depth)
-                    excerpt_importance = int(element.attrib[self._excerpt_importance_attribute])
-                    if excerpt_importance > excerpt_depth:
-                        element.attrib['checked'] = 'checked'
+                    element.attrib[_excerpt_depth_attribute] = str(excerpt_depth)
+                    importance = int(element.attrib.get(_excerpt_importance_attribute, 0))
+                    attribute = 'checked' if element.tag == 'input' else 'open'
+                    if importance > excerpt_depth:
+                        element.attrib[attribute] = attribute
                     else:
-                        element.attrib.pop('checked', None)
-            result.append(element_tree)
+                        element.attrib.pop(attribute, None)
+            excerpt_parent.append(excerpt)
 
             os.chdir(return_dir)
 
@@ -160,19 +182,34 @@ class _InlineProcessor(InlineProcessor):
 
 
 class _TreeProcessor(Treeprocessor):
+
     def run(self, root: ElementTree):
-        for element in _recurse(root):
+        for grand_parent, j, parent in _recurse_with_parent_index(root):
             i = 0
-            while i < len(element):
-                child = element[i]
+            while i < len(parent):
+                child = parent[i]
                 if child.tag == 'markdown_links_container':
-                    del element[i]
+                    del parent[i]
                     for transfer_child in child:
-                        element.insert(i, transfer_child)
-                        i += 1
-                    element[i - 1].tail = child.tail
+                        if parent.tag != 'p' or transfer_child.tag in ('a', 'span'):
+                            parent.insert(i, transfer_child)
+                            i += 1
+                        else:
+                            j += 1
+                            while j < len(grand_parent) and \
+                                    grand_parent[j].get('class', None) == 'markdown_links_excerpt':
+                                j += 1
+                            grand_parent.insert(j, transfer_child)
+                    parent[i - 1].tail = child.tail
                 else:
                     i += 1
+
+
+def _parse_relative_url(link: str):
+    match = _relative_url_pattern.match(link)
+    if not match:
+        return False, None, None, None
+    return True, match.group(1), match.group(2), match.group(3)
 
 
 def _recurse(element_tree: ElementTree):
@@ -181,11 +218,20 @@ def _recurse(element_tree: ElementTree):
         yield from _recurse(child)
 
 
-def _parse_relative_url(link: str):
-    match = _relative_url_pattern.match(link)
-    if not match:
-        return False, None, None, None
-    return True, match.group(1), match.group(2), match.group(3)
+def _recurse_with_parent_index(element_tree: ElementTree, parent: ElementTree = None, index: int = 0):
+    if parent:
+        yield parent, index, element_tree
+    i = 0
+    while i < len(element_tree):
+        yield from _recurse_with_parent_index(element_tree[i], element_tree, i)
+        i += 1
+
+
+def _initialize_depth_and_importance(element: Element, importance: str, attribute: str):
+    element.attrib[_excerpt_depth_attribute] = '0'
+    if importance != '0':
+        element.attrib[_excerpt_importance_attribute] = importance
+        element.attrib[attribute] = attribute
 
 
 def _fix_attribute_relative_url(element: Element, attribute: str, anchor_path):
