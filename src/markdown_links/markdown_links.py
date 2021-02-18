@@ -1,5 +1,6 @@
 import os
 import re
+from copy import deepcopy
 from pathlib import Path
 from re import Pattern
 from typing import Optional, List
@@ -137,7 +138,7 @@ class _InlineProcessor(InlineProcessor):
             return_dir = os.getcwd()
             os.chdir(document_path.parent)
 
-            element_tree = ElementTree.fromstring(self.md.convert(''.join(document_excerpt_lines)))
+            element_tree = ElementTree.fromstring(deepcopy(self.md).convert(''.join(document_excerpt_lines)))
             element_tree.attrib['class'] = 'markdown_links_excerpt'
             for element in _recurse(element_tree):
                 _fix_attribute_relative_url(element, 'href', return_dir)
