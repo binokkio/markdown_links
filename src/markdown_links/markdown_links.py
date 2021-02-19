@@ -156,6 +156,7 @@ class _InlineProcessor(InlineProcessor):
 
             md = deepcopy(self.md)
             md.stripTopLevelTags = False
+            md.set_output_format('xhtml')
             excerpt = ElementTree.fromstring(md.convert(''.join(excerpt_lines)))
             if len(excerpt) == 1:
                 excerpt = excerpt[0]
